@@ -1,0 +1,16 @@
+
+# .NET build files
+**/bin/
+**/obj/
+.vs/
+
+# Local editor settings
+.vscode/
+
+# Dataset
+/data/
+*.parquet
+
+# Local configuration
+.env
+*.log
