@@ -20,6 +20,7 @@ services:
     environment:
       Ollama__BaseUrl: http://ollama:11434
       Corpus__DirectoryPath: /data/corpus/documents
+      Corpus__MaxDocuments: ${CORPUS_MAX_INDEX_DOCUMENTS:-}
     volumes:
       - corpus-data:/data/corpus:ro
     depends_on:

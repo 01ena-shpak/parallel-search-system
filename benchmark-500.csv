@@ -1,0 +1,9 @@
+phase,documents,threads,index_time_ms,index_wall_time_ms,clients,requested_queries,completed_queries,errors,total_time_seconds,requests_per_second,error_details
+index,500,1,11277.7846,11557.546,,,,0,11.557546,,
+index,500,2,5880.4784,5856.745,,,,0,5.856745,,
+index,500,4,3672.8771,3697.556,,,,0,3.697556,,
+index,500,8,3909.2902,3962.41,,,,0,3.96241,,
+search,500,8,,,1,200,200,0,4.440571,45.039,
+search,500,8,,,2,200,200,0,1.964383,101.813,
+search,500,8,,,4,200,200,0,1.034519,193.327,
+search,500,8,,,8,200,200,0,0.558682,357.985,

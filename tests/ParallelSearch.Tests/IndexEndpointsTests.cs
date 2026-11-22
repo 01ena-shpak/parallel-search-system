@@ -11,6 +11,7 @@ namespace ParallelSearch.Tests;
 public sealed class IndexEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private const string CorpusDirectoryConfigurationKey = "Corpus:DirectoryPath";
+    private const string CorpusMaxDocumentsConfigurationKey = "Corpus:MaxDocuments";
     private readonly WebApplicationFactory<Program> _factory;
 
     public IndexEndpointsTests(WebApplicationFactory<Program> factory)
@@ -194,13 +195,95 @@ public sealed class IndexEndpointsTests : IClassFixture<WebApplicationFactory<Pr
             snapshot.Index.Search("deepword"));
     }
 
-    private WebApplicationFactory<Program> CreateFactory(string corpusDirectoryPath)
+    [Fact]
+    public async Task PostIndex_WithMaxDocuments_UsesStableDocumentOrder()
+    {
+        using var corpus = new TemporaryCorpus();
+        corpus.CreateTextFile("c.txt", "thirdword");
+        corpus.CreateTextFile("a.txt", "firstword");
+        corpus.CreateTextFile("b.txt", "secondword");
+        using WebApplicationFactory<Program> factory = CreateFactory(
+            corpus.DirectoryPath,
+            maxDocuments: "2");
+        using HttpClient client = factory.CreateClient();
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/index",
+            new { threads = 2 });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        JsonElement json = await ReadJson(response);
+        Assert.Equal(2, json.GetProperty("documents_indexed").GetInt32());
+
+        IndexSnapshot snapshot = factory.Services
+            .GetRequiredService<IndexStateService>()
+            .GetSnapshot();
+        Assert.Equal(["a.txt"], snapshot.Index.Search("firstword"));
+        Assert.Equal(["b.txt"], snapshot.Index.Search("secondword"));
+        Assert.Empty(snapshot.Index.Search("thirdword"));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("not-a-number")]
+    public async Task PostIndex_WithInvalidMaxDocuments_ReturnsConfigurationError(
+        string maxDocuments)
+    {
+        using var corpus = CreateCorpus(documentCount: 3);
+        using WebApplicationFactory<Program> factory = CreateFactory(
+            corpus.DirectoryPath,
+            maxDocuments);
+        using HttpClient client = factory.CreateClient();
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/index",
+            new { threads = 2 });
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        JsonElement error = await ReadJson(response);
+        Assert.Contains(
+            CorpusMaxDocumentsConfigurationKey,
+            error.GetProperty("error").GetString(),
+            StringComparison.Ordinal);
+
+        using HttpResponseMessage statsResponse = await client.GetAsync("/api/stats");
+        JsonElement stats = await ReadJson(statsResponse);
+        Assert.Equal(0, stats.GetProperty("documents").GetInt32());
+    }
+
+    [Fact]
+    public async Task PostIndex_WithoutMaxDocuments_StillIndexesAllDocuments()
+    {
+        using var corpus = CreateCorpus(documentCount: 5);
+        using WebApplicationFactory<Program> factory = CreateFactory(corpus.DirectoryPath);
+        using HttpClient client = factory.CreateClient();
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/index",
+            new { threads = 2 });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        JsonElement json = await ReadJson(response);
+        Assert.Equal(5, json.GetProperty("documents_indexed").GetInt32());
+    }
+
+    private WebApplicationFactory<Program> CreateFactory(
+        string corpusDirectoryPath,
+        string? maxDocuments = null)
     {
         return _factory.WithWebHostBuilder(builder =>
         {
             builder.UseSetting(
                 CorpusDirectoryConfigurationKey,
                 corpusDirectoryPath);
+
+            if (maxDocuments is not null)
+            {
+                builder.UseSetting(
+                    CorpusMaxDocumentsConfigurationKey,
+                    maxDocuments);
+            }
         });
     }
 

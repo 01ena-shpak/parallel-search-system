@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using ParallelSearch.Core;
 
 namespace ParallelSearch.Api;
@@ -25,6 +26,7 @@ public sealed record SearchExecutionResult(
 public sealed class IndexStateService
 {
     private const string CorpusDirectoryConfigurationKey = "Corpus:DirectoryPath";
+    private const string CorpusMaxDocumentsConfigurationKey = "Corpus:MaxDocuments";
 
     private readonly ParallelIndexBuilder _indexBuilder;
     private readonly IConfiguration _configuration;
@@ -151,7 +153,7 @@ public sealed class IndexStateService
                 $"Corpus directory '{corpusDirectoryPath}' does not exist.");
         }
 
-        return Directory
+        IOrderedEnumerable<TextDocument> orderedDocuments = Directory
             .EnumerateFiles(
                 corpusDirectoryPath,
                 "*.txt",
@@ -159,8 +161,38 @@ public sealed class IndexStateService
             .Select(filePath => new TextDocument(
                 CreateDocumentId(corpusDirectoryPath, filePath),
                 filePath))
-            .OrderBy(document => document.Id, StringComparer.Ordinal)
+            .OrderBy(document => document.Id, StringComparer.Ordinal);
+        int? maxDocuments = GetMaxDocuments();
+
+        return (maxDocuments.HasValue
+                ? orderedDocuments.Take(maxDocuments.Value)
+                : orderedDocuments)
             .ToArray();
+    }
+
+    private int? GetMaxDocuments()
+    {
+        string? configuredValue = _configuration[
+            CorpusMaxDocumentsConfigurationKey];
+
+        if (string.IsNullOrWhiteSpace(configuredValue))
+        {
+            return null;
+        }
+
+        if (!int.TryParse(
+                configuredValue,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out int maxDocuments)
+            || maxDocuments <= 0)
+        {
+            throw new InvalidOperationException(
+                $"Configuration '{CorpusMaxDocumentsConfigurationKey}' " +
+                "must be a positive integer.");
+        }
+
+        return maxDocuments;
     }
 
     private static string CreateDocumentId(
