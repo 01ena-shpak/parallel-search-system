@@ -1,4 +1,16 @@
 services:
+  corpus-prepare:
+    build:
+      context: .
+      dockerfile: tools/corpus/Dockerfile
+    environment:
+      CORPUS_OUTPUT_DIR: /data/documents
+      CORPUS_DOWNLOAD_DIR: /data/downloads
+      CORPUS_MAX_DOCUMENTS: ${CORPUS_MAX_DOCUMENTS:-}
+    volumes:
+      - corpus-data:/data
+    restart: "no"
+
   api:
     build:
       context: .
@@ -7,7 +19,12 @@ services:
       - "8080:8080"
     environment:
       Ollama__BaseUrl: http://ollama:11434
+      Corpus__DirectoryPath: /data/corpus/documents
+    volumes:
+      - corpus-data:/data/corpus:ro
     depends_on:
+      corpus-prepare:
+        condition: service_completed_successfully
       ollama:
         condition: service_healthy
       ollama-model-loader:
@@ -37,4 +54,5 @@ services:
     restart: "no"
 
 volumes:
+  corpus-data:
   ollama-data:

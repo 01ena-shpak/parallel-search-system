@@ -2,6 +2,8 @@
 # .NET build files
 **/bin/
 **/obj/
+**/__pycache__/
+*.pyc
 .vs/
 
 # Local editor settings

@@ -3,6 +3,9 @@
 .vscode/
 **/bin/
 **/obj/
+**/__pycache__/
+**/*.pyc
 docs/
 tests/
+tools/corpus/test_*.py
 README.md
