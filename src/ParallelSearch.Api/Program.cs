@@ -1,3 +1,6 @@
+using ParallelSearch.Api;
+using ParallelSearch.Core;
+
 var builder = WebApplication.CreateBuilder(args);
 
 string ollamaBaseUrl = builder.Configuration["Ollama:BaseUrl"]
@@ -8,10 +11,61 @@ builder.Services.AddHttpClient("Ollama", client =>
     client.BaseAddress = new Uri(ollamaBaseUrl);
     client.Timeout = TimeSpan.FromSeconds(2);
 });
+builder.Services.AddSingleton<ParallelIndexBuilder>();
+builder.Services.AddSingleton<IndexStateService>();
 
 var app = builder.Build();
 
 app.MapGet("/", () => "Hello World!");
+
+app.MapPost("/api/index", async (
+    IndexRequest request,
+    IndexStateService indexState,
+    CancellationToken cancellationToken) =>
+{
+    if (request.Threads <= 0)
+    {
+        return Results.BadRequest(new
+        {
+            error = "threads must be greater than zero."
+        });
+    }
+
+    try
+    {
+        ParallelIndexBuildResult result = await indexState.RebuildAsync(
+            request.Threads,
+            cancellationToken);
+
+        return Results.Ok(new
+        {
+            status = "ok",
+            documents_indexed = result.DocumentsIndexed,
+            time_ms = result.TimeMs
+        });
+    }
+    catch (Exception exception) when (exception is not OperationCanceledException)
+    {
+        return Results.Json(
+            new
+            {
+                error = exception.GetBaseException().Message
+            },
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapGet("/api/stats", (IndexStateService indexState) =>
+{
+    IndexSnapshot snapshot = indexState.GetSnapshot();
+
+    return Results.Ok(new
+    {
+        documents = snapshot.Documents,
+        index_build_time_ms = snapshot.IndexBuildTimeMs,
+        threads_used = snapshot.ThreadsUsed
+    });
+});
 
 app.MapGet("/api/health", async (
     IHttpClientFactory httpClientFactory,
@@ -44,5 +98,7 @@ app.MapGet("/api/health", async (
 });
 
 app.Run();
+
+public sealed record IndexRequest(int Threads);
 
 public partial class Program;
