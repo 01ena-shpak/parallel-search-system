@@ -5,6 +5,7 @@ public sealed class InvertedIndex
     private const int SectionCount = 16;
     private const int InitialBucketsPerSection = 64;
     private readonly Section[] _sections;
+    private readonly DocumentIdRegistry _documentIds = new();
 
     public InvertedIndex()
     {
@@ -21,6 +22,7 @@ public sealed class InvertedIndex
         ArgumentNullException.ThrowIfNull(documentId);
         ArgumentNullException.ThrowIfNull(content);
 
+        int numericDocumentId = _documentIds.GetOrAdd(documentId);
         var uniqueWords = new StringSet();
         int wordStart = -1;
 
@@ -45,7 +47,7 @@ public sealed class InvertedIndex
 
                 if (uniqueWords.Add(word))
                 {
-                    AddWord(word, documentId);
+                    AddWord(word, numericDocumentId);
                 }
 
                 wordStart = -1;
@@ -66,10 +68,13 @@ public sealed class InvertedIndex
         uint hash = CalculateHash(normalizedWord);
         int sectionIndex = CalculateSectionIndex(hash);
 
-        return _sections[sectionIndex].Search(normalizedWord, hash);
+        int[] numericDocumentIds =
+            _sections[sectionIndex].Search(normalizedWord, hash);
+
+        return _documentIds.Resolve(numericDocumentIds);
     }
 
-    private void AddWord(string word, string documentId)
+    private void AddWord(string word, int documentId)
     {
         uint hash = CalculateHash(word);
         int sectionIndex = CalculateSectionIndex(hash);
@@ -114,7 +119,7 @@ public sealed class InvertedIndex
         private Entry?[] _buckets = new Entry?[InitialBucketsPerSection];
         private int _wordCount;
 
-        public void Add(string word, string documentId, uint hash)
+        public void Add(string word, int documentId, uint hash)
         {
             lock (_sync)
             {
@@ -127,7 +132,7 @@ public sealed class InvertedIndex
                 {
                     if (current.Word == word)
                     {
-                        current.DocumentIds.Add(documentId);
+                        current.AddDocumentId(documentId);
                         return;
                     }
 
@@ -144,7 +149,7 @@ public sealed class InvertedIndex
             }
         }
 
-        public IReadOnlyList<string> Search(string word, uint hash)
+        public int[] Search(string word, uint hash)
         {
             lock (_sync)
             {
@@ -157,13 +162,13 @@ public sealed class InvertedIndex
                 {
                     if (current.Word == word)
                     {
-                        return current.DocumentIds.CopyValues();
+                        return current.CopyDocumentIds();
                     }
 
                     current = current.Next;
                 }
 
-                return Array.Empty<string>();
+                return Array.Empty<int>();
             }
         }
 
@@ -202,113 +207,392 @@ public sealed class InvertedIndex
 
     private sealed class Entry
     {
-        public Entry(string word, string documentId, Entry? next)
+        private DocumentIdSet _documentIds;
+
+        public Entry(string word, int documentId, Entry? next)
         {
             Word = word;
-            DocumentIds = new DocumentIdSet(documentId);
+            _documentIds = new DocumentIdSet(documentId);
             Next = next;
         }
 
         public string Word { get; }
 
-        public DocumentIdSet DocumentIds { get; }
-
         public Entry? Next { get; set; }
-    }
 
-    private sealed class DocumentIdSet
-    {
-        private readonly string _firstDocumentId;
-        private StringSet? _documentIds;
-
-        public DocumentIdSet(string firstDocumentId)
+        public void AddDocumentId(int documentId)
         {
-            _firstDocumentId = firstDocumentId;
+            _documentIds.Add(documentId);
         }
 
-        public bool Add(string documentId)
+        public int[] CopyDocumentIds()
         {
-            if (_documentIds is null)
+            return _documentIds.CopyValues();
+        }
+    }
+
+    private struct DocumentIdSet
+    {
+        private const int LinearSearchLimit = 8;
+        private const int InitialValueCapacity = 4;
+        private const int InitialLookupCapacity = 16;
+
+        private readonly int _firstDocumentId;
+        private int[]? _values;
+        private int[]? _lookupSlots;
+        private int _count;
+
+        public DocumentIdSet(int firstDocumentId)
+        {
+            _firstDocumentId = firstDocumentId;
+            _values = null;
+            _lookupSlots = null;
+            _count = 1;
+        }
+
+        public bool Add(int documentId)
+        {
+            if (_lookupSlots is null)
             {
-                if (_firstDocumentId == documentId)
+                if (ContainsInSmallList(documentId))
                 {
                     return false;
                 }
 
-                _documentIds = new StringSet();
-                _documentIds.Add(_firstDocumentId);
+                Append(documentId);
+
+                if (_count > LinearSearchLimit)
+                {
+                    BuildLookup();
+                }
+
+                return true;
             }
 
-            return _documentIds.Add(documentId);
+            if (ContainsInLookup(documentId, _lookupSlots))
+            {
+                return false;
+            }
+
+            EnsureLookupCapacity(_count + 1);
+            Append(documentId);
+            InsertIntoLookup(documentId, _lookupSlots!);
+
+            return true;
         }
 
-        public string[] CopyValues()
+        public int[] CopyValues()
         {
-            return _documentIds is null
-                ? [_firstDocumentId]
-                : _documentIds.CopyValues();
+            if (_count == 1)
+            {
+                return [_firstDocumentId];
+            }
+
+            var copy = new int[_count];
+            Array.Copy(_values!, copy, _count);
+            return copy;
+        }
+
+        private bool ContainsInSmallList(int documentId)
+        {
+            if (_firstDocumentId == documentId)
+            {
+                return true;
+            }
+
+            if (_values is null)
+            {
+                return false;
+            }
+
+            for (int index = 1; index < _count; index++)
+            {
+                if (_values[index] == documentId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void Append(int documentId)
+        {
+            if (_values is null)
+            {
+                _values = new int[InitialValueCapacity];
+                _values[0] = _firstDocumentId;
+            }
+            else if (_count == _values.Length)
+            {
+                var resizedValues = new int[_values.Length * 2];
+                Array.Copy(_values, resizedValues, _count);
+                _values = resizedValues;
+            }
+
+            _values[_count] = documentId;
+            _count++;
+        }
+
+        private void BuildLookup()
+        {
+            int lookupCapacity = InitialLookupCapacity;
+
+            while ((long)_count * 4 > (long)lookupCapacity * 3)
+            {
+                lookupCapacity *= 2;
+            }
+
+            _lookupSlots = new int[lookupCapacity];
+
+            for (int index = 0; index < _count; index++)
+            {
+                InsertIntoLookup(_values![index], _lookupSlots);
+            }
+        }
+
+        private void EnsureLookupCapacity(int requiredCount)
+        {
+            if ((long)requiredCount * 4
+                <= (long)_lookupSlots!.Length * 3)
+            {
+                return;
+            }
+
+            var resizedLookup = new int[_lookupSlots.Length * 2];
+
+            for (int index = 0; index < _count; index++)
+            {
+                InsertIntoLookup(_values![index], resizedLookup);
+            }
+
+            _lookupSlots = resizedLookup;
+        }
+
+        private static bool ContainsInLookup(
+            int documentId,
+            int[] lookupSlots)
+        {
+            int storedValue = documentId + 1;
+            int slotIndex = CalculateDocumentIdSlot(
+                documentId,
+                lookupSlots.Length);
+
+            while (lookupSlots[slotIndex] != 0)
+            {
+                if (lookupSlots[slotIndex] == storedValue)
+                {
+                    return true;
+                }
+
+                slotIndex = (slotIndex + 1) & (lookupSlots.Length - 1);
+            }
+
+            return false;
+        }
+
+        private static void InsertIntoLookup(
+            int documentId,
+            int[] lookupSlots)
+        {
+            int slotIndex = CalculateDocumentIdSlot(
+                documentId,
+                lookupSlots.Length);
+
+            while (lookupSlots[slotIndex] != 0)
+            {
+                slotIndex = (slotIndex + 1) & (lookupSlots.Length - 1);
+            }
+
+            lookupSlots[slotIndex] = documentId + 1;
+        }
+
+        private static int CalculateDocumentIdSlot(
+            int documentId,
+            int slotCount)
+        {
+            uint hash = (uint)documentId;
+            hash ^= hash >> 16;
+            hash *= 0x7feb352d;
+            hash ^= hash >> 15;
+            hash *= 0x846ca68b;
+            hash ^= hash >> 16;
+
+            return (int)(hash & (uint)(slotCount - 1));
         }
     }
 
     private sealed class StringSet
     {
-        private const int InitialBucketCount = 8;
+        private const int InitialSlotCount = 8;
 
-        private StringNode?[] _buckets = new StringNode?[InitialBucketCount];
-        private readonly List<string> _values = [];
+        private string?[] _slots = new string?[InitialSlotCount];
         private int _count;
 
         public bool Add(string value)
         {
             uint hash = CalculateHash(value);
-            int bucketIndex = CalculateBucketIndex(hash, _buckets.Length);
-            StringNode? current = _buckets[bucketIndex];
 
-            while (current is not null)
+            if (Contains(value, hash))
             {
-                if (current.Value == value)
-                {
-                    return false;
-                }
-
-                current = current.Next;
+                return false;
             }
 
             EnsureCapacity();
-            bucketIndex = CalculateBucketIndex(hash, _buckets.Length);
-            _buckets[bucketIndex] = new StringNode(
-                value,
-                _buckets[bucketIndex]);
-            _values.Add(value);
+            Insert(value, hash, _slots);
             _count++;
 
             return true;
         }
 
-        public string[] CopyValues()
+        private bool Contains(string value, uint hash)
         {
-            return _values.ToArray();
+            int slotIndex = CalculateBucketIndex(hash, _slots.Length);
+
+            while (_slots[slotIndex] is not null)
+            {
+                if (string.Equals(
+                    _slots[slotIndex],
+                    value,
+                    StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                slotIndex = (slotIndex + 1) & (_slots.Length - 1);
+            }
+
+            return false;
         }
 
         private void EnsureCapacity()
+        {
+            if ((long)(_count + 1) * 4 <= (long)_slots.Length * 3)
+            {
+                return;
+            }
+
+            var resizedSlots = new string?[_slots.Length * 2];
+
+            for (int index = 0; index < _slots.Length; index++)
+            {
+                string? value = _slots[index];
+
+                if (value is not null)
+                {
+                    Insert(value, CalculateHash(value), resizedSlots);
+                }
+            }
+
+            _slots = resizedSlots;
+        }
+
+        private static void Insert(
+            string value,
+            uint hash,
+            string?[] slots)
+        {
+            int slotIndex = CalculateBucketIndex(hash, slots.Length);
+
+            while (slots[slotIndex] is not null)
+            {
+                slotIndex = (slotIndex + 1) & (slots.Length - 1);
+            }
+
+            slots[slotIndex] = value;
+        }
+    }
+
+    private sealed class DocumentIdRegistry
+    {
+        private const int InitialBucketCount = 64;
+
+        private readonly object _sync = new();
+        private DocumentIdNode?[] _buckets =
+            new DocumentIdNode?[InitialBucketCount];
+        private string?[] _valuesById = new string?[InitialBucketCount];
+        private int _count;
+
+        public int GetOrAdd(string value)
+        {
+            uint hash = CalculateHash(value);
+
+            lock (_sync)
+            {
+                int bucketIndex = CalculateBucketIndex(hash, _buckets.Length);
+                DocumentIdNode? current = _buckets[bucketIndex];
+
+                while (current is not null)
+                {
+                    if (current.Hash == hash
+                        && string.Equals(
+                            current.Value,
+                            value,
+                            StringComparison.Ordinal))
+                    {
+                        return current.NumericId;
+                    }
+
+                    current = current.Next;
+                }
+
+                EnsureBucketCapacity();
+                EnsureValueCapacity();
+
+                int numericId = _count;
+                bucketIndex = CalculateBucketIndex(hash, _buckets.Length);
+                _buckets[bucketIndex] = new DocumentIdNode(
+                    value,
+                    numericId,
+                    hash,
+                    _buckets[bucketIndex]);
+                _valuesById[numericId] = value;
+                _count++;
+
+                return numericId;
+            }
+        }
+
+        public string[] Resolve(int[] numericIds)
+        {
+            if (numericIds.Length == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            lock (_sync)
+            {
+                var values = new string[numericIds.Length];
+
+                for (int index = 0; index < numericIds.Length; index++)
+                {
+                    values[index] = _valuesById[numericIds[index]]!;
+                }
+
+                return values;
+            }
+        }
+
+        private void EnsureBucketCapacity()
         {
             if ((long)(_count + 1) * 4 <= (long)_buckets.Length * 3)
             {
                 return;
             }
 
-            var resizedBuckets = new StringNode?[_buckets.Length * 2];
+            var resizedBuckets = new DocumentIdNode?[_buckets.Length * 2];
 
-            for (int bucketIndex = 0; bucketIndex < _buckets.Length; bucketIndex++)
+            for (int bucketIndex = 0;
+                 bucketIndex < _buckets.Length;
+                 bucketIndex++)
             {
-                StringNode? current = _buckets[bucketIndex];
+                DocumentIdNode? current = _buckets[bucketIndex];
 
                 while (current is not null)
                 {
-                    StringNode? next = current.Next;
-                    uint hash = CalculateHash(current.Value);
+                    DocumentIdNode? next = current.Next;
                     int resizedBucketIndex = CalculateBucketIndex(
-                        hash,
+                        current.Hash,
                         resizedBuckets.Length);
 
                     current.Next = resizedBuckets[resizedBucketIndex];
@@ -319,18 +603,40 @@ public sealed class InvertedIndex
 
             _buckets = resizedBuckets;
         }
+
+        private void EnsureValueCapacity()
+        {
+            if (_count < _valuesById.Length)
+            {
+                return;
+            }
+
+            var resizedValues = new string?[_valuesById.Length * 2];
+            Array.Copy(_valuesById, resizedValues, _count);
+            _valuesById = resizedValues;
+        }
     }
 
-    private sealed class StringNode
+    private sealed class DocumentIdNode
     {
-        public StringNode(string value, StringNode? next)
+        public DocumentIdNode(
+            string value,
+            int numericId,
+            uint hash,
+            DocumentIdNode? next)
         {
             Value = value;
+            NumericId = numericId;
+            Hash = hash;
             Next = next;
         }
 
         public string Value { get; }
 
-        public StringNode? Next { get; set; }
+        public int NumericId { get; }
+
+        public uint Hash { get; }
+
+        public DocumentIdNode? Next { get; set; }
     }
 }

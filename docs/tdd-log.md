@@ -14,5 +14,6 @@
 | `CLI and Web UI` | Додано 5 тестів CLI та вебінтерфейсу. 70 PASS, 5 FAIL. | Реалізовано CLI-команди health, stats, index, search та адаптивний HTML/CSS/JS-інтерфейс із WebSocket-пошуком. 75/75 PASS. | Додано обробку тайм-ауту CLI та перевірки статичних ресурсів. Фінально 76/76 PASS. Додатково перевірено роботу інтерфейсів у Docker. |
 | Gutenberg corpus preparation | 4 Python-тести RED | Реалізовано завантаження Parquet, конвертацію в UTF-8 .txt, Docker volume та відновлення; 4/4 PASS | Перевірено sample mode на 10 книгах і повний корпус: 10048 документів, 3.39 GiB; dotnet test 76/76 PASS |
 | Corpus indexing limit and benchmark | 77 PASS, 4 FAIL | Реалізовано Corpus:MaxDocuments, Docker-конфігурацію та benchmark індексації й паралельного пошуку; 81/81 PASS | Перевірено 100, 500, 1000 документів у benchmark та окрему індексацію 2000 і 4000 документів. Усі експерименти завершено успішно. |
+| InvertedIndex memory optimization | Додано 4 тести на дублікати, 10000 документів та конкурентний доступ | Запроваджено числові ID, DocumentIdRegistry і компактні posting lists; 85/85 PASS | На 4000 документах RAM зменшилася з 2.965 до 1.018 GiB. Повна індексація 10048 документів успішна: 48.37 с, RAM після завершення 2.043 GiB. |
 
 

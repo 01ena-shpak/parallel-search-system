@@ -106,6 +106,48 @@ public sealed class InvertedIndexTests
     }
 
     [Fact]
+    public void AddDocument_WhenSameDocumentIsAddedManyTimes_KeepsOnePosting()
+    {
+        const int repetitions = 5000;
+        var index = new InvertedIndex();
+
+        for (int repetition = 0; repetition < repetitions; repetition++)
+        {
+            index.AddDocument("repeated-doc", "common common");
+        }
+
+        Assert.Equal(["repeated-doc"], index.Search("common"));
+    }
+
+    [Fact]
+    public void Search_WhenManyDocumentsContainOneWord_ReturnsEveryIdOnce()
+    {
+        const int documentCount = 10000;
+        var index = new InvertedIndex();
+
+        for (int documentIndex = 0;
+             documentIndex < documentCount;
+             documentIndex++)
+        {
+            index.AddDocument($"common-{documentIndex}", "common");
+        }
+
+        IReadOnlyList<string> results = index.Search("common");
+
+        Assert.Equal(documentCount, results.Count);
+        Assert.Equal(
+            documentCount,
+            results.Distinct(StringComparer.Ordinal).Count());
+
+        for (int documentIndex = 0;
+             documentIndex < documentCount;
+             documentIndex++)
+        {
+            Assert.Equal($"common-{documentIndex}", results[documentIndex]);
+        }
+    }
+
+    [Fact]
     public void AddDocument_WithManyDifferentWords_KeepsEveryWordSearchable()
     {
         const int wordCount = 5000;
@@ -195,6 +237,48 @@ public sealed class InvertedIndexTests
                     results);
             }
         }
+    }
+
+    [Fact]
+    public async Task AddDocument_FromMultipleThreadsWithSameDocumentId_KeepsOnePosting()
+    {
+        const int producerCount = 8;
+        const int additionsPerProducer = 500;
+        var index = new InvertedIndex();
+
+        await RunConcurrently(producerCount, _ =>
+        {
+            for (int addition = 0;
+                 addition < additionsPerProducer;
+                 addition++)
+            {
+                index.AddDocument("shared-doc", "shared common");
+            }
+        });
+
+        Assert.Equal(["shared-doc"], index.Search("shared"));
+        Assert.Equal(["shared-doc"], index.Search("common"));
+    }
+
+    [Fact]
+    public void Search_AfterMixedDocuments_PreservesExpectedResultSets()
+    {
+        var index = new InvertedIndex();
+        index.AddDocument("doc-c", "Parallel, indexing and search.");
+        index.AddDocument("doc-a", "SEARCH systems");
+        index.AddDocument("doc-b", "parallel algorithms parallel");
+        index.AddDocument("doc-a", "indexing");
+
+        Assert.Equal(
+            ["doc-b", "doc-c"],
+            index.Search("parallel").Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(
+            ["doc-a", "doc-c"],
+            index.Search("search").Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(
+            ["doc-a", "doc-c"],
+            index.Search("indexing").Order(StringComparer.Ordinal).ToArray());
+        Assert.Empty(index.Search("missing"));
     }
 
     [Fact]
