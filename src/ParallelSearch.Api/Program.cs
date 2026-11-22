@@ -67,6 +67,40 @@ app.MapGet("/api/stats", (IndexStateService indexState) =>
     });
 });
 
+app.MapPost("/api/search", (
+    SearchRequest request,
+    IndexStateService indexState) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Query))
+    {
+        return Results.BadRequest(new
+        {
+            error = "query must not be empty."
+        });
+    }
+
+    if (!string.Equals(request.Mode, "keyword", StringComparison.Ordinal))
+    {
+        return Results.BadRequest(new
+        {
+            error = "mode must be 'keyword'."
+        });
+    }
+
+    SearchExecutionResult searchResult = indexState.Search(request.Query);
+
+    return Results.Ok(new
+    {
+        results = searchResult.Results.Select(result => new
+        {
+            doc_id = result.DocumentId,
+            score = result.Score,
+            snippet = result.Snippet
+        }),
+        time_ms = searchResult.TimeMs
+    });
+});
+
 app.MapGet("/api/health", async (
     IHttpClientFactory httpClientFactory,
     CancellationToken cancellationToken) =>
@@ -100,5 +134,7 @@ app.MapGet("/api/health", async (
 app.Run();
 
 public sealed record IndexRequest(int Threads);
+
+public sealed record SearchRequest(string? Query, string? Mode);
 
 public partial class Program;

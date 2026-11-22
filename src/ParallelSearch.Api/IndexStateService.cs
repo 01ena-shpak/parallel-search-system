@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ParallelSearch.Core;
 
 namespace ParallelSearch.Api;
@@ -6,7 +7,20 @@ public sealed record IndexSnapshot(
     InvertedIndex Index,
     int Documents,
     double IndexBuildTimeMs,
-    int ThreadsUsed);
+    int ThreadsUsed)
+{
+    public IReadOnlyDictionary<string, string> Snippets { get; init; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+}
+
+public sealed record SearchHit(
+    string DocumentId,
+    double Score,
+    string Snippet);
+
+public sealed record SearchExecutionResult(
+    IReadOnlyList<SearchHit> Results,
+    double TimeMs);
 
 public sealed class IndexStateService
 {
@@ -44,7 +58,13 @@ public sealed class IndexStateService
                 result.Index,
                 result.DocumentsIndexed,
                 result.TimeMs,
-                result.ThreadsUsed);
+                result.ThreadsUsed)
+            {
+                Snippets = result.Snippets.ToDictionary(
+                    snippet => snippet.DocumentId,
+                    snippet => snippet.Text,
+                    StringComparer.Ordinal)
+            };
 
             lock (_snapshotLock)
             {
@@ -65,6 +85,52 @@ public sealed class IndexStateService
         {
             return _snapshot;
         }
+    }
+
+    public SearchExecutionResult Search(string query)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        string[] queryTerms = GetUniqueTerms(query);
+        IndexSnapshot snapshot = GetSnapshot();
+        var matchedTermCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        for (int termIndex = 0; termIndex < queryTerms.Length; termIndex++)
+        {
+            IReadOnlyList<string> documentIds = snapshot.Index.Search(
+                queryTerms[termIndex]);
+
+            for (int documentIndex = 0;
+                 documentIndex < documentIds.Count;
+                 documentIndex++)
+            {
+                string documentId = documentIds[documentIndex];
+
+                if (matchedTermCounts.TryGetValue(documentId, out int count))
+                {
+                    matchedTermCounts[documentId] = count + 1;
+                }
+                else
+                {
+                    matchedTermCounts[documentId] = 1;
+                }
+            }
+        }
+
+        SearchHit[] results = matchedTermCounts
+            .Select(match => new SearchHit(
+                match.Key,
+                (double)match.Value / queryTerms.Length,
+                snapshot.Snippets.TryGetValue(match.Key, out string? snippet)
+                    ? snippet
+                    : string.Empty))
+            .OrderByDescending(result => result.Score)
+            .ThenBy(result => result.DocumentId, StringComparer.Ordinal)
+            .ToArray();
+
+        stopwatch.Stop();
+        return new SearchExecutionResult(
+            results,
+            stopwatch.Elapsed.TotalMilliseconds);
     }
 
     private TextDocument[] GetConfiguredDocuments()
@@ -106,5 +172,42 @@ public sealed class IndexStateService
         return relativePath
             .Replace(Path.DirectorySeparatorChar, '/')
             .Replace(Path.AltDirectorySeparatorChar, '/');
+    }
+
+    private static string[] GetUniqueTerms(string query)
+    {
+        var terms = new List<string>();
+        var uniqueTerms = new HashSet<string>(StringComparer.Ordinal);
+        int wordStart = -1;
+
+        for (int index = 0; index <= query.Length; index++)
+        {
+            bool isWordCharacter = index < query.Length
+                && char.IsLetterOrDigit(query[index]);
+
+            if (isWordCharacter)
+            {
+                if (wordStart < 0)
+                {
+                    wordStart = index;
+                }
+
+                continue;
+            }
+
+            if (wordStart >= 0)
+            {
+                string term = query[wordStart..index].ToLowerInvariant();
+
+                if (uniqueTerms.Add(term))
+                {
+                    terms.Add(term);
+                }
+
+                wordStart = -1;
+            }
+        }
+
+        return terms.ToArray();
     }
 }
