@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parallel Search</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="hero">
+    <div>
+      <p class="eyebrow">Parallel computing course project</p>
+      <h1>Parallel Search</h1>
+      <p class="subtitle">Паралельна індексація та пошук із розширенням запиту через Ollama</p>
+    </div>
+    <button id="health-button" class="button secondary" type="button">Перевірити стан</button>
+  </header>
+
+  <main>
+    <section class="status-bar" aria-live="polite">
+      <span id="api-status" class="status neutral">API: не перевірено</span>
+      <span id="ollama-status" class="status neutral">Ollama: не перевірено</span>
+      <span id="message" class="message"></span>
+    </section>
+
+    <div class="dashboard">
+      <section class="card">
+        <div class="card-heading">
+          <div><p class="eyebrow">Індекс</p><h2>Побудова індексу</h2></div>
+        </div>
+        <form id="index-form">
+          <label for="threads">Кількість потоків</label>
+          <div class="control-group">
+            <input id="threads" name="threads" type="number" min="1" value="4" required>
+            <button id="index-button" class="button" type="submit">Побудувати</button>
+          </div>
+        </form>
+        <dl class="stats" id="stats">
+          <div><dt>Документів</dt><dd id="documents">0</dd></div>
+          <div><dt>Час побудови</dt><dd id="build-time">0 ms</dd></div>
+          <div><dt>Потоків</dt><dd id="threads-used">0</dd></div>
+        </dl>
+      </section>
+
+      <section class="card search-card">
+        <div class="card-heading">
+          <div><p class="eyebrow">Пошук</p><h2>Пошук у документах</h2></div>
+        </div>
+        <form id="search-form">
+          <label for="query">Англомовний пошуковий запит</label>
+          <div class="control-group">
+            <input id="query" name="query" type="search" placeholder="parallel computing" required>
+            <button id="search-button" class="button" type="submit">Шукати</button>
+          </div>
+        </form>
+
+        <div class="pipeline" aria-live="polite">
+          <div class="stage" id="expansion-stage">
+            <span class="stage-number">1</span>
+            <div><strong>Розширення запиту</strong><p id="expansion-text">Очікує запуску</p></div>
+          </div>
+          <div class="stage" id="search-stage">
+            <span class="stage-number">2</span>
+            <div><strong>Пошук за індексом</strong><p id="search-text">Очікує запуску</p></div>
+          </div>
+          <div class="stage" id="done-stage">
+            <span class="stage-number">3</span>
+            <div><strong>Завершення</strong><p id="done-text">Очікує запуску</p></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="card results-card">
+      <div class="card-heading">
+        <div><p class="eyebrow">Результати</p><h2>Знайдені документи</h2></div>
+        <span id="result-summary" class="result-summary">Пошук ще не виконувався</span>
+      </div>
+      <div id="results" class="results" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

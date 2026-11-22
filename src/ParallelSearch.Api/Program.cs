@@ -24,9 +24,9 @@ builder.Services.AddSingleton<IndexStateService>();
 
 var app = builder.Build();
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseWebSockets();
-
-app.MapGet("/", () => "Hello World!");
 
 app.MapGet("/ws/search", async (
     HttpContext context,

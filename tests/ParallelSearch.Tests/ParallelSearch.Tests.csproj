@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ParallelSearch.Api\ParallelSearch.Api.csproj" />
+    <ProjectReference Include="..\..\src\ParallelSearch.Cli\ParallelSearch.Cli.csproj" />
     <ProjectReference Include="..\..\src\ParallelSearch.Core\ParallelSearch.Core.csproj" />
   </ItemGroup>
 
