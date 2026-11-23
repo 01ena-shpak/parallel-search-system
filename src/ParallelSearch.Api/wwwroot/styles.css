@@ -65,6 +65,11 @@ input:focus { outline: 3px solid rgba(49, 89, 217, .16); border-color: var(--pri
 .score { color: var(--primary); font-weight: 800; }
 .snippet { margin: 0; color: #46526a; white-space: pre-wrap; overflow-wrap: anywhere; }
 .empty { padding: 1.5rem; color: var(--muted); text-align: center; }
+.pagination { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 1rem; }
+.pagination[hidden] { display: none; }
+.pagination-button { min-width: 7.5rem; }
+.pagination-button:disabled { cursor: not-allowed; }
+.page-info { min-width: 8rem; color: var(--muted); font-weight: 700; text-align: center; }
 
 @media (max-width: 760px) {
   .hero { align-items: flex-start; flex-direction: column; }
@@ -78,4 +83,7 @@ input:focus { outline: 3px solid rgba(49, 89, 217, .16); border-color: var(--pri
   .card { padding: 1rem; border-radius: 14px; }
   .control-group { flex-direction: column; }
   .button { width: 100%; }
+  .pagination { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; }
+  .pagination .page-info { grid-column: 1 / -1; grid-row: 1; }
+  .pagination-button { min-width: 0; }
 }

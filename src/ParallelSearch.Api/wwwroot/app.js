@@ -19,8 +19,17 @@ const elements = {
   doneStage: document.querySelector('#done-stage'),
   doneText: document.querySelector('#done-text'),
   resultSummary: document.querySelector('#result-summary'),
-  results: document.querySelector('#results')
+  results: document.querySelector('#results'),
+  pagination: document.querySelector('#pagination'),
+  previousPage: document.querySelector('#previous-page'),
+  pageInfo: document.querySelector('#page-info'),
+  nextPage: document.querySelector('#next-page')
 };
+
+const resultsPerPage = 20;
+let searchResults = [];
+let currentPage = 1;
+let searchTimeMs = 0;
 
 async function requestJson(url, options) {
   const response = await fetch(url, options);
@@ -118,7 +127,7 @@ elements.searchForm.addEventListener('submit', event => {
   elements.searchButton.disabled = true;
   elements.expansionStage.classList.add('active');
   elements.expansionText.textContent = 'Ollama розширює запит…';
-  elements.results.replaceChildren();
+  resetResultPagination();
   elements.resultSummary.textContent = 'Пошук виконується…';
 
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -199,11 +208,20 @@ function resetSearchStages() {
 }
 
 function renderResults(results, timeMs) {
+  searchResults = results;
+  searchTimeMs = timeMs;
+  currentPage = 1;
+  renderCurrentPage();
+}
+
+function renderCurrentPage() {
   elements.results.replaceChildren();
   elements.resultSummary.textContent =
-    `${results.length.toLocaleString()} результатів · ${formatNumber(timeMs)} ms`;
+    `${searchResults.length.toLocaleString()} результатів · ${formatNumber(searchTimeMs)} ms`;
 
-  if (results.length === 0) {
+  if (searchResults.length === 0) {
+    elements.pagination.hidden = true;
+    elements.pageInfo.textContent = '';
     const empty = document.createElement('p');
     empty.className = 'empty';
     empty.textContent = 'Документів за цим запитом не знайдено.';
@@ -211,7 +229,13 @@ function renderResults(results, timeMs) {
     return;
   }
 
-  for (const result of results) {
+  const totalPages = Math.ceil(searchResults.length / resultsPerPage);
+  currentPage = Math.min(Math.max(currentPage, 1), totalPages);
+  const pageStart = (currentPage - 1) * resultsPerPage;
+  const pageEnd = pageStart + resultsPerPage;
+  const pageResults = searchResults.slice(pageStart, pageEnd);
+
+  for (const result of pageResults) {
     const article = document.createElement('article');
     article.className = 'result';
     const header = document.createElement('div');
@@ -229,6 +253,20 @@ function renderResults(results, timeMs) {
     article.append(header, snippet);
     elements.results.append(article);
   }
+
+  elements.pagination.hidden = false;
+  elements.pageInfo.textContent = `Сторінка ${currentPage} з ${totalPages}`;
+  elements.previousPage.disabled = currentPage === 1;
+  elements.nextPage.disabled = currentPage === totalPages;
+}
+
+function resetResultPagination() {
+  searchResults = [];
+  searchTimeMs = 0;
+  currentPage = 1;
+  elements.results.replaceChildren();
+  elements.pagination.hidden = true;
+  elements.pageInfo.textContent = '';
 }
 
 function formatNumber(value) {
@@ -236,5 +274,19 @@ function formatNumber(value) {
 }
 
 elements.healthButton.addEventListener('click', checkHealth);
+elements.previousPage.addEventListener('click', () => {
+  if (currentPage > 1) {
+    currentPage--;
+    renderCurrentPage();
+  }
+});
+elements.nextPage.addEventListener('click', () => {
+  const totalPages = Math.ceil(searchResults.length / resultsPerPage);
+
+  if (currentPage < totalPages) {
+    currentPage++;
+    renderCurrentPage();
+  }
+});
 checkHealth();
 refreshStats();

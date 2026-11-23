@@ -37,4 +37,28 @@ public sealed class UserInterfaceTests : IClassFixture<WebApplicationFactory<Pro
         Assert.Contains("new WebSocket", script, StringComparison.Ordinal);
         Assert.Contains("@media", styles, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task WebInterface_PaginatesSearchResultsOnTheClient()
+    {
+        using HttpClient client = _factory.CreateClient();
+
+        string page = await client.GetStringAsync("/");
+        string script = await client.GetStringAsync("/app.js");
+        string styles = await client.GetStringAsync("/styles.css");
+
+        Assert.Contains("id=\"pagination\"", page, StringComparison.Ordinal);
+        Assert.Contains("id=\"previous-page\"", page, StringComparison.Ordinal);
+        Assert.Contains("id=\"next-page\"", page, StringComparison.Ordinal);
+        Assert.Contains("id=\"page-info\"", page, StringComparison.Ordinal);
+        Assert.Contains("const resultsPerPage = 20;", script, StringComparison.Ordinal);
+        Assert.Contains(
+            "searchResults.slice(pageStart, pageEnd)",
+            script,
+            StringComparison.Ordinal);
+        Assert.Contains("currentPage = 1;", script, StringComparison.Ordinal);
+        Assert.Contains("documentId.textContent", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("innerHTML", script, StringComparison.Ordinal);
+        Assert.Contains(".pagination", styles, StringComparison.Ordinal);
+    }
 }
