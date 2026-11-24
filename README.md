@@ -62,6 +62,8 @@ Compose підтримує дві незалежні змінні:
 - `CORPUS_MAX_DOCUMENTS` — обмежує кількість справжніх книг, які готує `corpus-prepare`. Наприклад, значення `10` призначене для швидкої перевірки завантаження. Такий запуск не позначає корпус як повний.
 - `CORPUS_MAX_INDEX_DOCUMENTS` — обмежує кількість уже підготовлених `.txt`, які API бере для індексації. Вибір файлів має стабільний порядок. Якщо змінну не задано, індексуються всі документи.
 
+Кожна книга зберігається окремим UTF-8 файлом `<Gutenberg ID>.txt`, наприклад `1342.txt`. Усередині API-контейнера каталог доступний лише для читання за шляхом `/data/corpus/documents`; стабільним `doc_id` у пошуковій відповіді є відносний шлях до `.txt` від цього каталогу.
+
 Приклад безпечного запуску з десятьма підготовленими книгами та індексацією не більше десяти документів:
 
 ```powershell
@@ -113,28 +115,154 @@ dotnet run --project .\src\ParallelSearch.Cli -- search parallel computing
 dotnet run --project .\src\ParallelSearch.Cli -- --api-url http://localhost:8080 search history of science
 ```
 
-CLI використовує лише REST API та не дублює індексацію або пошукові алгоритми.
+CLI використовує лише REST API, а команда `search` виконує keyword-пошук без Ollama. CLI не дублює індексацію або пошукові алгоритми. Розширення запиту через Ollama доступне у Web UI, який використовує WebSocket.
 
 ## API
 
-Усі REST-відповіді мають формат JSON.
+REST API працює з JSON. Поля, позначені як обов’язкові, мають бути присутні у запиті; назви полів відповідають фактичній серіалізації сервера.
 
-| Метод і шлях | Запит | Успішна відповідь |
+### `GET /api/health`
+
+Параметрів немає. Недоступність, неуспішна HTTP-відповідь або тайм-аут Ollama не спричиняють помилку API.
+
+| HTTP | Поле відповіді | Тип | Обов’язкове | Значення |
+|---|---|---|---|---|
+| `200 OK` | `status` | `string` | так | Завжди `"ok"`. |
+| `200 OK` | `ollama` | `boolean` | так | `true`, якщо health-перевірка Ollama успішна; інакше `false`. |
+
+```json
+{"status":"ok","ollama":true}
+```
+
+### `POST /api/index`
+
+| Напрям | Поле | Тип | Обов’язкове | Умова або значення |
+|---|---|---|---|---|
+| Запит | `threads` | `integer` | так | Додатне число робочих потоків. |
+| Відповідь `200` | `status` | `string` | так | `"ok"`. |
+| Відповідь `200` | `documents_indexed` | `integer` | так | Кількість успішно проіндексованих документів. |
+| Відповідь `200` | `time_ms` | `number` | так | Час побудови індексу в мілісекундах. |
+
+```json
+{"threads":4}
+```
+
+```json
+{"status":"ok","documents_indexed":10048,"time_ms":92731.42}
+```
+
+| HTTP-код | Коли повертається | Тіло |
 |---|---|---|
-| `GET /api/health` | — | `status`, `ollama` |
-| `POST /api/index` | `{"threads":4}` | `status`, `documents_indexed`, `time_ms` |
-| `POST /api/search` | `{"query":"parallel computing","mode":"keyword"}` | `results` із `doc_id`, `score`, `snippet`; `time_ms` |
-| `GET /api/stats` | — | `documents`, `index_build_time_ms`, `threads_used` |
+| `200 OK` | Індекс успішно побудовано й опубліковано. | Контракт успішної відповіді вище. |
+| `400 Bad Request` | `threads <= 0`. | `{"error":"threads must be greater than zero."}` |
+| `500 Internal Server Error` | Помилка конфігурації корпусу, недоступний каталог або помилка читання/побудови. | `{"error":"<повідомлення базового винятку>"}` |
 
-REST-пошук виконує keyword-пошук без звернення до Ollama. Багатослівний запит використовує OR; результати сортуються за score, потім за `doc_id`.
+Після помилки побудови попередній успішний snapshot індексу та статистики залишається доступним.
 
-WebSocket `ws://localhost:8080/ws/search` приймає одне повідомлення:
+### `POST /api/search`
+
+| Напрям | Поле | Тип | Обов’язкове | Умова або значення |
+|---|---|---|---|---|
+| Запит | `query` | `string` | так | Непорожній пошуковий запит. |
+| Запит | `mode` | `string` | так | Точне значення `"keyword"`. |
+| Відповідь `200` | `results` | `array<object>` | так | Масив результатів; до першої індексації він порожній. |
+| `results[]` | `doc_id` | `string` | так | Стабільний відносний шлях документа. |
+| `results[]` | `score` | `number` | так | Частка унікальних слів запиту, знайдених у документі. |
+| `results[]` | `snippet` | `string` | так | Збережений фрагмент документа довжиною до 200 символів. |
+| Відповідь `200` | `time_ms` | `number` | так | Час пошуку в мілісекундах. |
+
+```json
+{"query":"parallel computing","mode":"keyword"}
+```
+
+```json
+{"results":[{"doc_id":"1342.txt","score":0.5,"snippet":"Text fragment..."}],"time_ms":3.21}
+```
+
+| HTTP-код | Коли повертається | Тіло |
+|---|---|---|
+| `200 OK` | Запит валідний, зокрема коли збігів немає. | Контракт успішної відповіді вище. |
+| `400 Bad Request` | `query` відсутній, порожній або складається з пробілів. | `{"error":"query must not be empty."}` |
+| `400 Bad Request` | `mode` відсутній або не дорівнює `"keyword"`. | `{"error":"mode must be 'keyword'."}` |
+
+REST-пошук не звертається до Ollama. Багатослівний запит використовує OR, повторення слів не впливає на score, а результати сортуються за score спадно, потім за `doc_id`.
+
+### `GET /api/stats`
+
+Параметрів немає.
+
+| HTTP | Поле відповіді | Тип | Обов’язкове | Значення |
+|---|---|---|---|---|
+| `200 OK` | `documents` | `integer` | так | Кількість документів в останньому успішному індексі. |
+| `200 OK` | `index_build_time_ms` | `number` | так | Час останньої успішної побудови в мілісекундах. |
+| `200 OK` | `threads_used` | `integer` | так | Кількість потоків останньої успішної побудови. |
+
+До першої індексації всі три значення дорівнюють нулю:
+
+```json
+{"documents":0,"index_build_time_ms":0,"threads_used":0}
+```
+
+### WebSocket `/ws/search`
+
+Web UI підключається до `ws://localhost:8080/ws/search`. Звичайний HTTP-запит без WebSocket upgrade отримує `400 Bad Request` без JSON-контракту. Після підключення клієнт надсилає одне текстове JSON-повідомлення; `query` — обов’язковий непорожній `string`:
 
 ```json
 {"query":"parallel computing"}
 ```
 
-Сервер послідовно надсилає етапи `query_expansion`, `keyword_search` і `done`. Якщо Ollama недоступна, `query_expansion` містить помилку та порожній список додаткових термінів, після чого пошук продовжується з початковим запитом.
+За успішної обробки сервер послідовно надсилає три повідомлення.
+
+`query_expansion`: `stage` — `string`, `data.original` — початковий `string`, `data.expanded_terms` — масив додаткових `string` (не більше п’яти):
+
+```json
+{
+  "stage": "query_expansion",
+  "data": {
+    "original": "parallel computing",
+    "expanded_terms": ["concurrency", "multithreading"]
+  }
+}
+```
+
+`keyword_search`: `data.results` має той самий склад полів і типи, що й REST-пошук; `data.time_ms` — `number`:
+
+```json
+{
+  "stage": "keyword_search",
+  "data": {
+    "results": [
+      {"doc_id":"1342.txt","score":0.5,"snippet":"Text fragment..."}
+    ],
+    "time_ms": 3.21
+  }
+}
+```
+
+`done` містить тільки поле `stage`, після чого сервер нормально закриває вихід WebSocket:
+
+```json
+{"stage":"done"}
+```
+
+Якщо Ollama повертає HTTP-помилку, некоректний JSON, не має очікуваного поля або перевищує тайм-аут, сервер виконує контрольований fallback. `expanded_terms` стає порожнім, `data.error` містить текст помилки (`string`), а потім пошук продовжується лише з початковим запитом і сервер надсилає `keyword_search` та `done`:
+
+```json
+{
+  "stage": "query_expansion",
+  "data": {
+    "original": "parallel computing",
+    "expanded_terms": [],
+    "error": "<текст помилки>"
+  }
+}
+```
+
+Некоректний JSON, порожній `query` або бінарне повідомлення не запускають пошук. Сервер надсилає `stage = "error"`, де `error` — непорожній `string`, і закриває WebSocket зі статусом `InvalidPayloadData`:
+
+```json
+{"stage":"error","error":"query must not be empty."}
+```
 
 ## Тести
 
